@@ -1,0 +1,811 @@
+<!DOCTYPE html>
+<html lang="bn">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>কুমিল্লা — ৬০ সেকেন্ডের অ্যানিমেটেড ডকুমেন্টারি</title>
+<style>
+  *{box-sizing:border-box}
+  body{
+    margin:0;min-height:100vh;background:#17201f;color:#f4f1ea;
+    font-family:"Noto Sans Bengali","Hind Siliguri","Nirmala UI","Kalpurush","SolaimanLipi","Vrinda",system-ui,sans-serif;
+    display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;padding:16px;
+  }
+  h1{font-size:clamp(20px,3.2vw,34px);margin:0;text-align:center;font-weight:700}
+  .stage{width:100%;max-width:1200px;border-radius:14px;overflow:hidden;background:#000;box-shadow:0 10px 40px rgba(0,0,0,.45)}
+  canvas{display:block;width:100%;height:auto;aspect-ratio:16/9}
+  .bar{width:100%;max-width:1200px;display:flex;align-items:center;gap:12px;font-size:clamp(16px,2vw,20px)}
+  .track{flex:1;height:10px;background:#33403e;border-radius:6px;overflow:hidden}
+  .fill{height:100%;width:0;background:#e0b25a}
+  .controls{display:flex;flex-wrap:wrap;gap:10px;justify-content:center;width:100%;max-width:1200px}
+  button{
+    font:inherit;font-size:clamp(16px,2vw,22px);font-weight:700;min-width:160px;
+    padding:12px 22px;border:0;border-radius:10px;background:#e0b25a;color:#1b1b1b;cursor:pointer;
+  }
+  button:hover{filter:brightness(1.07)}
+  button:disabled{opacity:.5;cursor:not-allowed}
+  .note{font-size:clamp(14px,1.6vw,17px);opacity:.8;text-align:center;max-width:900px;line-height:1.7;margin:0}
+</style>
+</head>
+<body>
+
+<h1>কুমিল্লা: ইতিহাস, ঐতিহ্য আর স্বাদের জেলা</h1>
+
+<div class="stage">
+  <canvas id="c" width="1600" height="900" aria-label="কুমিল্লা অ্যানিমেটেড ডকুমেন্টারি"></canvas>
+</div>
+
+<div class="bar">
+  <span id="time">00:00 / 01:00</span>
+  <div class="track"><div class="fill" id="fill"></div></div>
+</div>
+
+<div class="controls">
+  <button id="playBtn">▶ শুরু করুন</button>
+  <button id="replayBtn">↺ আবার দেখুন</button>
+  <button id="muteBtn">🔇 মিউট</button>
+  <button id="dlBtn">⬇ WebM ডাউনলোড</button>
+</div>
+
+<p class="note">
+  সাউন্ড ইফেক্ট Web Audio API দিয়ে তৈরি, কোনো ভয়েসওভার বা ব্যাকগ্রাউন্ড মিউজিক নেই।
+  ডাউনলোড বাটন পুরো ৬০ সেকেন্ড রেকর্ড করে সাউন্ডসহ WebM ফাইল দেয় (Chrome, Edge, Firefox-এ সাধারণত কাজ করে)। MP4 সরাসরি তৈরি করা হয় না।
+</p>
+
+<script>
+/* ============================================================
+   সেটআপ
+   ============================================================ */
+const cv = document.getElementById('c');
+const ctx = cv.getContext('2d');
+const W = 1600, H = 900, DUR = 60;
+const FONT = '"Noto Sans Bengali","Hind Siliguri","Nirmala UI","Kalpurush","SolaimanLipi","Vrinda",sans-serif';
+const INK = '#1f2a2a', ACC = '#2f6f5e', TAU = Math.PI * 2;
+
+const $ = id => document.getElementById(id);
+const playBtn = $('playBtn'), replayBtn = $('replayBtn'), muteBtn = $('muteBtn'), dlBtn = $('dlBtn');
+const timeEl = $('time'), fillEl = $('fill');
+
+/* ---------- গণিত/ইজিং হেল্পার ---------- */
+const clamp = (x, a = 0, b = 1) => Math.max(a, Math.min(b, x));
+const lerp = (a, b, k) => a + (b - a) * k;
+const ease = k => k < .5 ? 4 * k * k * k : 1 - Math.pow(-2 * k + 2, 3) / 2;
+const easeOut = k => 1 - Math.pow(1 - k, 3);
+function bounce(x) {
+  const n = 7.5625, d = 2.75;
+  if (x < 1 / d) return n * x * x;
+  if (x < 2 / d) return n * (x -= 1.5 / d) * x + .75;
+  if (x < 2.5 / d) return n * (x -= 2.25 / d) * x + .9375;
+  return n * (x -= 2.625 / d) * x + .984375;
+}
+
+/* ---------- ড্রয়িং হেল্পার ---------- */
+function bg(f) { ctx.fillStyle = f; ctx.fillRect(0, 0, W, H); }
+function vgrad(c0, c1, y0 = 0, y1 = H) {
+  const g = ctx.createLinearGradient(0, y0, 0, y1);
+  g.addColorStop(0, c0); g.addColorStop(1, c1); return g;
+}
+function circ(x, y, r, c) { ctx.fillStyle = c; ctx.beginPath(); ctx.arc(x, y, r, 0, TAU); ctx.fill(); }
+function fillR(x, y, w, h, c) { ctx.fillStyle = c; ctx.fillRect(x, y, w, h); }
+function glow(x, y, r, c) {
+  const g = ctx.createRadialGradient(x, y, 0, x, y, r);
+  g.addColorStop(0, c); g.addColorStop(1, 'rgba(255,255,255,0)');
+  ctx.fillStyle = g; ctx.beginPath(); ctx.arc(x, y, r, 0, TAU); ctx.fill();
+}
+function rr(x, y, w, h, r) {
+  ctx.beginPath();
+  ctx.moveTo(x + r, y); ctx.lineTo(x + w - r, y); ctx.arcTo(x + w, y, x + w, y + r, r);
+  ctx.lineTo(x + w, y + h - r); ctx.arcTo(x + w, y + h, x + w - r, y + h, r);
+  ctx.lineTo(x + r, y + h); ctx.arcTo(x, y + h, x, y + h - r, r);
+  ctx.lineTo(x, y + r); ctx.arcTo(x, y, x + r, y, r); ctx.closePath();
+}
+function setFont(s, weight, px, maxW) {
+  let size = px;
+  ctx.font = `${weight} ${size}px ${FONT}`;
+  while (ctx.measureText(s).width > maxW && size > 28) {
+    size -= 2; ctx.font = `${weight} ${size}px ${FONT}`;
+  }
+}
+function hill(base, amp, ph, drift, color) {
+  ctx.fillStyle = color; ctx.beginPath(); ctx.moveTo(0, H);
+  for (let x = 0; x <= W; x += 20) {
+    ctx.lineTo(x, base + Math.sin(drift * 0.25 + ph) * 6 - amp * Math.sin(x * 0.0035 + ph));
+  }
+  ctx.lineTo(W, H); ctx.closePath(); ctx.fill();
+}
+
+/* ---------- ক্যাপশন ও ট্যাগ ---------- */
+function caption(l1, l2, lt) {
+  const k = easeOut(clamp(lt / 0.8));
+  if (k <= 0) return;
+  const h = l2 ? 176 : 124;
+  const y = 700 + (1 - k) * 24;
+  ctx.save();
+  ctx.globalAlpha *= k;
+  ctx.shadowColor = 'rgba(0,0,0,0.25)'; ctx.shadowBlur = 26; ctx.shadowOffsetY = 6;
+  ctx.fillStyle = 'rgba(255,255,255,0.93)';
+  rr(150, y, 1300, h, 24); ctx.fill();
+  ctx.shadowColor = 'transparent'; ctx.shadowBlur = 0; ctx.shadowOffsetY = 0;
+  ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  ctx.fillStyle = INK;
+  setFont(l1, '700', 66, 1220);
+  ctx.fillText(l1, 800, y + (l2 ? 60 : h / 2));
+  if (l2) {
+    setFont(l2, '500', 44, 1220);
+    ctx.fillStyle = ACC;
+    ctx.fillText(l2, 800, y + 128);
+  }
+  ctx.restore();
+}
+function tag(txt) {
+  ctx.save();
+  ctx.font = `500 26px ${FONT}`;
+  const w = ctx.measureText(txt).width + 40;
+  ctx.fillStyle = 'rgba(20,32,30,0.6)';
+  rr(1560 - w, 28, w, 46, 23); ctx.fill();
+  ctx.fillStyle = '#fff'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  ctx.fillText(txt, 1560 - w / 2, 51);
+  ctx.restore();
+}
+
+/* ============================================================
+   মানচিত্র (schematic) — জেলা-সীমানা আঁকা হয়নি
+   ============================================================ */
+const MAP_K = 110;
+const PROJ = (lon, lat) => ({ x: (lon - 88) * MAP_K, y: (26.7 - lat) * MAP_K });
+const LAND = [[88.1,25.2],[88.2,26.4],[88.9,26.2],[89.8,26.0],[90.5,25.9],[90.9,25.2],[91.8,25.1],
+  [92.2,24.9],[92.4,24.2],[92.2,23.5],[91.7,22.9],[92.3,22.0],[92.0,21.1],[91.9,20.7],[91.0,21.8],
+  [90.2,22.3],[90.0,21.8],[89.4,21.8],[88.8,22.0],[88.5,21.6],[88.1,21.9],[88.6,22.8],[88.1,23.7]]
+  .map(([a, b]) => PROJ(a, b));
+const MAP_C = { x: 242, y: 330 };
+const PIN = PROJ(91.18, 23.46); // কুমিল্লা (আনুমানিক অবস্থান, schematic)
+
+function drawWorldMap(C, z) {
+  ctx.save();
+  ctx.translate(800, 360); ctx.scale(z, z); ctx.translate(-C.x, -C.y);
+  ctx.strokeStyle = 'rgba(70,110,130,0.14)'; ctx.lineWidth = 1 / z;
+  for (let lon = 86; lon <= 94; lon++) {
+    const a = PROJ(lon, 18), b = PROJ(lon, 29);
+    ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); ctx.stroke();
+  }
+  for (let lat = 19; lat <= 28; lat++) {
+    const a = PROJ(85, lat), b = PROJ(95, lat);
+    ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); ctx.stroke();
+  }
+  ctx.beginPath();
+  LAND.forEach((p, i) => i ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y));
+  ctx.closePath();
+  ctx.fillStyle = '#d3e7c4'; ctx.fill();
+  ctx.strokeStyle = '#3e7258'; ctx.lineWidth = 2.5 / z; ctx.lineJoin = 'round'; ctx.stroke();
+  ctx.fillStyle = '#5a7585';
+  ctx.font = `500 ${22 / z}px ${FONT}`;
+  ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  let q = PROJ(90.3, 26.9); ctx.fillText('ভারত', q.x, q.y);
+  q = PROJ(92.9, 22.4); ctx.fillText('মিয়ানমার', q.x, q.y);
+  q = PROJ(89.5, 21.0); ctx.fillText('বঙ্গোপসাগর', q.x, q.y);
+  ctx.restore();
+}
+
+function drawPin(x, y, drop, labelA, pt) {
+  if (drop <= 0.001) return;
+  const yy = y - (1 - drop) * 140;
+  ctx.save();
+  ctx.globalAlpha *= Math.min(1, drop * 1.5);
+  if (drop > 0.99) {
+    const f = (pt * 0.7) % 1;
+    ctx.strokeStyle = `rgba(181,86,43,${((1 - f) * 0.6).toFixed(3)})`;
+    ctx.lineWidth = 4;
+    ctx.beginPath(); ctx.ellipse(x, y, 20 + f * 44, (20 + f * 44) * 0.35, 0, 0, TAU); ctx.stroke();
+  }
+  ctx.fillStyle = 'rgba(0,0,0,0.2)';
+  ctx.beginPath(); ctx.ellipse(x, y + 4, 16, 6, 0, 0, TAU); ctx.fill();
+  ctx.fillStyle = '#b5562b';
+  ctx.beginPath(); ctx.moveTo(x - 18, yy - 30); ctx.lineTo(x, yy); ctx.lineTo(x + 18, yy - 30); ctx.closePath(); ctx.fill();
+  circ(x, yy - 36, 22, '#b5562b');
+  circ(x, yy - 36, 8, '#ffffff');
+  if (labelA > 0) {
+    ctx.globalAlpha *= labelA;
+    setFont('কুমিল্লা', '700', 40, 300);
+    const w = ctx.measureText('কুমিল্লা').width + 36;
+    ctx.fillStyle = 'rgba(255,255,255,0.95)';
+    rr(x - w / 2, yy - 120, w, 54, 14); ctx.fill();
+    ctx.fillStyle = INK; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillText('কুমিল্লা', x, yy - 93);
+  }
+  ctx.restore();
+}
+
+/* ============================================================
+   আইকন (ইনট্রো)
+   ============================================================ */
+function iconStupa() {
+  fillR(-70, 40, 140, 16, '#c9a57a');
+  fillR(-38, -10, 76, 50, '#e6cfa6');
+  circ(0, -10, 0, '#000');
+  ctx.fillStyle = '#b5562b'; ctx.beginPath(); ctx.arc(0, -10, 38, Math.PI, 0); ctx.fill();
+  fillR(-4, -78, 8, 30, '#8c6a4a');
+  circ(0, -84, 8, '#d9a441');
+}
+function iconWeave() {
+  for (let i = 0; i < 4; i++) for (let j = 0; j < 4; j++)
+    fillR(-72 + i * 36 + 2, -72 + j * 36 + 2, 32, 32, (i + j) % 2 ? '#2f6f5e' : '#d9a441');
+}
+function iconBowl() {
+  ctx.fillStyle = '#d9a441';
+  ctx.beginPath(); ctx.moveTo(-80, -10); ctx.quadraticCurveTo(-80, 60, 0, 60);
+  ctx.quadraticCurveTo(80, 60, 80, -10); ctx.closePath(); ctx.fill();
+  ctx.fillStyle = '#f0c46a'; ctx.beginPath(); ctx.ellipse(0, -10, 80, 18, 0, 0, TAU); ctx.fill();
+  ctx.fillStyle = '#fffaf0'; ctx.beginPath(); ctx.ellipse(0, -10, 66, 11, 0, 0, TAU); ctx.fill();
+  [[-30, -12], [0, -14], [30, -11]].forEach(([x, y]) => {
+    ctx.fillStyle = '#f5e3a1'; ctx.beginPath(); ctx.ellipse(x, y, 14, 7, 0, 0, TAU); ctx.fill();
+  });
+}
+
+/* ============================================================
+   দৃশ্যসমূহ (lt = দৃশ্যের শুরু থেকে স্থানীয় সময়)
+   ============================================================ */
+
+// ০–৫: মানচিত্র ও জুম
+function sceneMap(lt) {
+  bg('#e6f0f3');
+  const e = ease(clamp((lt - 0.4) / 3.2));
+  const z = lerp(1, 4.6, e);
+  const C = { x: lerp(MAP_C.x, PIN.x, e), y: lerp(MAP_C.y, PIN.y, e) };
+  drawWorldMap(C, z);
+  const sp = { x: (PIN.x - C.x) * z + 800, y: (PIN.y - C.y) * z + 360 };
+  const drop = bounce(clamp((lt - 3.5) / 0.6));
+  drawPin(sp.x, sp.y, drop, clamp((lt - 4.1) / 0.5), lt);
+  tag('স্কিম্যাটিক মানচিত্র');
+  caption('বাংলাদেশের মানচিত্রে—কুমিল্লা', '', lt);
+}
+
+// ৫–১১: পরিচিতি
+function sceneIntro(lt) {
+  bg('#fbf3e2');
+  for (let i = 0; i < 24; i++) {
+    circ((i * 211) % 1600, (i * 137) % 760 + 40, 4 + (i % 3) * 2,
+      `rgba(47,111,94,${(0.08 + 0.05 * Math.sin(lt + i)).toFixed(3)})`);
+  }
+  [[430, iconStupa], [800, iconWeave], [1170, iconBowl]].forEach(([x, fn], i) => {
+    const k = easeOut(clamp((lt - 0.2 - i * 0.45) / 0.8));
+    if (k <= 0) return;
+    ctx.save();
+    ctx.translate(x, 360); ctx.scale(0.6 + 0.4 * k, 0.6 + 0.4 * k); ctx.globalAlpha *= k;
+    ctx.shadowColor = 'rgba(80,60,30,0.2)'; ctx.shadowBlur = 30; ctx.shadowOffsetY = 10;
+    circ(0, 0, 130, '#ffffff');
+    ctx.shadowColor = 'transparent'; ctx.shadowBlur = 0; ctx.shadowOffsetY = 0;
+    fn();
+    ctx.restore();
+  });
+  caption('ইতিহাস, ঐতিহ্য আর স্বাদের জেলা', '', lt);
+}
+
+// ১১–২১: ময়নামতি ও শালবন বিহার (vector illustration)
+function salTree(x, base, s, lt, ph) {
+  const sway = Math.sin(lt * 0.9 + ph) * 4 * s;
+  fillR(x - 8 * s, base - 130 * s, 16 * s, 130 * s, '#7a5a3a');
+  const blobs = [[0, -170, 52], [-44, -146, 42], [46, -148, 44], [-14, -214, 40], [30, -206, 38]];
+  blobs.forEach(([dx, dy, r], i) => circ(x + sway + dx * s, base + dy * s, r * s, i % 2 ? '#3f7d52' : '#2f6b45'));
+}
+function sceneVihara(lt) {
+  bg(vgrad('#fbe6c2', '#d7ecdf'));
+  glow(1270, 190, 200, 'rgba(255,214,120,0.6)');
+  circ(1270, 190, 56, '#f7d37a');
+  hill(560, 70, 0.5, lt, '#b7d9b0');
+  hill(610, 50, 2.0, lt, '#94c28e');
+  fillR(0, 620, W, 280, '#7fab74');
+  salTree(190, 640, 1.2, lt, 0);
+  salTree(340, 650, 0.95, lt, 1.4);
+  salTree(1400, 645, 1.2, lt, 2.2);
+  salTree(1530, 650, 0.95, lt, 3);
+
+  // বিহারের চত্বর ও কাঠামো
+  fillR(470, 600, 660, 40, '#c9a57a');
+  fillR(580, 470, 440, 130, '#eadbc0');
+  ctx.strokeStyle = '#8c6a4a'; ctx.lineWidth = 4; ctx.strokeRect(580, 470, 440, 130);
+  for (let x = 610; x <= 960; x += 50) fillR(x, 500, 12, 100, '#d9c09a');
+  [600, 1000].forEach(x => {
+    fillR(x - 14, 430, 28, 40, '#e6cfa6');
+    circ(x, 430, 0, '#000');
+    ctx.fillStyle = '#b5562b'; ctx.beginPath(); ctx.arc(x, 430, 18, Math.PI, 0); ctx.fill();
+  });
+  fillR(730, 380, 140, 92, '#e6cfa6');
+  ctx.fillStyle = '#b5562b'; ctx.beginPath(); ctx.arc(800, 380, 82, Math.PI, 0); ctx.fill();
+  fillR(796, 250, 8, 50, '#8c6a4a');
+  circ(800, 246, 9, '#d9a441');
+  fillR(782, 530, 36, 70, '#5e4632');
+
+  // airy shimmer
+  glow(800, 380, 380, `rgba(255,250,220,${(0.12 + 0.08 * Math.sin(lt * 1.2)).toFixed(3)})`);
+  for (let i = 0; i < 30; i++) {
+    const x = 120 + ((i * 127) % 1360) + Math.sin(lt * 0.7 + i) * 14;
+    const y = 880 - ((lt * 22 + i * 47) % 620);
+    const a = 0.25 + 0.25 * Math.sin(lt * 1.8 + i * 1.3);
+    circ(x, y, 3 + (i % 3), `rgba(255,252,235,${a.toFixed(3)})`);
+  }
+  tag('ভেক্টর চিত্রণ');
+  caption('ময়নামতি ও শালবন বিহার', 'প্রাচীন বৌদ্ধ ঐতিহ্যের নিদর্শন', lt);
+}
+
+// ২১–২৯: জাদুঘর ও প্রত্নবস্তু (vector illustration)
+function sceneMuseum(lt) {
+  bg(vgrad('#f4eddf', '#e9dcc4'));
+  fillR(0, 620, W, 280, '#d9c7a4');
+  ctx.fillStyle = '#8c6a4a';
+  ctx.beginPath(); ctx.moveTo(470, 200); ctx.lineTo(800, 110); ctx.lineTo(1130, 200); ctx.closePath(); ctx.fill();
+  fillR(470, 200, 660, 34, '#8c6a4a');
+  fillR(500, 234, 600, 246, '#efe2c6');
+  ctx.strokeStyle = '#8c6a4a'; ctx.lineWidth = 4; ctx.strokeRect(500, 234, 600, 246);
+  for (let i = 0; i < 6; i++) {
+    const x = 540 + i * 104;
+    fillR(x, 262, 26, 200, '#fffaf0');
+    ctx.strokeRect(x, 262, 26, 200);
+  }
+  fillR(782, 370, 36, 110, '#5b4331');
+  fillR(470, 480, 660, 20, '#d8c7a6');
+  fillR(450, 500, 700, 20, '#cdb892');
+
+  const items = [{ x: 380, kind: 'pot' }, { x: 800, kind: 'coin' }, { x: 1220, kind: 'tablet' }];
+  items.forEach((it, i) => {
+    const k = easeOut(clamp((lt - 1.0 - i * 0.9) / 0.8));
+    glow(it.x, 520, 160, `rgba(255,226,150,${(0.5 * k).toFixed(3)})`);
+    fillR(it.x - 70, 600, 140, 70, '#b9a07a');
+    fillR(it.x - 82, 590, 164, 14, '#9c8160');
+    if (k <= 0) return;
+    ctx.save();
+    ctx.translate(it.x, 590); ctx.scale(k, k); ctx.globalAlpha *= k;
+    if (it.kind === 'pot') {
+      ctx.fillStyle = '#b5562b'; ctx.beginPath(); ctx.ellipse(0, -46, 48, 44, 0, 0, TAU); ctx.fill();
+      fillR(-20, -100, 40, 16, '#a24a24');
+      ctx.fillStyle = '#8a3c1c'; ctx.beginPath(); ctx.ellipse(0, -100, 22, 6, 0, 0, TAU); ctx.fill();
+      ctx.strokeStyle = '#e8b48a'; ctx.lineWidth = 3; ctx.beginPath(); ctx.ellipse(0, -60, 46, 14, 0, 0, TAU); ctx.stroke();
+    } else if (it.kind === 'coin') {
+      circ(0, -60, 50, '#d9a441');
+      ctx.strokeStyle = '#9a7226'; ctx.lineWidth = 5; ctx.beginPath(); ctx.arc(0, -60, 50, 0, TAU); ctx.stroke();
+      ctx.strokeStyle = '#b98a35'; ctx.lineWidth = 3; ctx.beginPath(); ctx.arc(0, -60, 34, 0, TAU); ctx.stroke();
+    } else {
+      ctx.fillStyle = '#8c7a66'; rr(-44, -130, 88, 122, 14); ctx.fill();
+      for (let j = 0; j < 5; j++) fillR(-30, -112 + j * 20, 60, 6, 'rgba(255,255,255,0.35)');
+    }
+    ctx.restore();
+  });
+  tag('ভেক্টর চিত্রণ');
+  caption('ময়নামতি জাদুঘর', 'অতীতের গল্প বলে প্রত্নসম্পদ', lt);
+}
+
+// ২৯–৩৮: রসমালাই ও দুধের ঢেউ (vector illustration)
+function sceneRasmalai(lt) {
+  bg(vgrad('#fdf0e6', '#f9e3e6'));
+  glow(800, 470, 420, 'rgba(255,250,235,0.7)');
+  const dy = (1 - easeOut(clamp(lt / 0.7))) * -80;
+  ctx.save();
+  ctx.translate(0, dy);
+  // বাটির দেহ
+  ctx.fillStyle = '#ffffff';
+  ctx.beginPath(); ctx.moveTo(420, 440); ctx.quadraticCurveTo(440, 650, 800, 670);
+  ctx.quadraticCurveTo(1160, 650, 1180, 440); ctx.closePath(); ctx.fill();
+  ctx.strokeStyle = '#7fa6c9'; ctx.lineWidth = 6; ctx.stroke();
+  ctx.strokeStyle = '#6b9ac4'; ctx.lineWidth = 14;
+  ctx.beginPath(); ctx.moveTo(440, 520); ctx.quadraticCurveTo(800, 610, 1160, 520); ctx.stroke();
+  // বাটির মুখ ও দুধ
+  ctx.fillStyle = '#ffffff'; ctx.beginPath(); ctx.ellipse(800, 440, 380, 96, 0, 0, TAU); ctx.fill();
+  ctx.strokeStyle = '#7fa6c9'; ctx.lineWidth = 6; ctx.stroke();
+  ctx.save();
+  ctx.beginPath(); ctx.ellipse(800, 440, 350, 84, 0, 0, TAU); ctx.clip();
+  ctx.beginPath(); ctx.moveTo(440, 360);
+  for (let x = 440; x <= 1160; x += 10) {
+    const u = x - 800;
+    const y = 430 + Math.sin(u * 0.022 + lt * 2.2) * 7 + Math.sin(u * 0.01 - lt * 1.4) * 5;
+    ctx.lineTo(x, y);
+  }
+  ctx.lineTo(1160, 540); ctx.lineTo(440, 540); ctx.closePath();
+  ctx.fillStyle = '#fffdf5'; ctx.fill();
+  ctx.restore();
+  // রসমালাইয়ের টুকরো
+  [[700, 448], [790, 462], [885, 440], [760, 420]].forEach(([x, y], i) => {
+    const k = easeOut(clamp((lt - 0.9 - i * 0.25) / 0.6));
+    if (k <= 0) return;
+    const by = y + Math.sin(lt * 2 + i) * 2;
+    ctx.save();
+    ctx.translate(x, by); ctx.scale(k, k);
+    ctx.fillStyle = '#f7e4a0'; ctx.beginPath(); ctx.ellipse(0, 0, 46, 26, 0, 0, TAU); ctx.fill();
+    ctx.strokeStyle = '#e2c46a'; ctx.lineWidth = 3; ctx.stroke();
+    ctx.fillStyle = '#fff6d6'; ctx.beginPath(); ctx.ellipse(0, -4, 38, 18, 0, 0, TAU); ctx.fill();
+    circ(-10, -4, 3, '#9bbf6a'); circ(8, -2, 3, '#9bbf6a'); circ(0, 4, 2.5, '#9bbf6a');
+    ctx.restore();
+  });
+  ctx.restore();
+  tag('ভেক্টর চিত্রণ');
+  caption('কুমিল্লার রসমালাই', 'মিষ্টি স্বাদের পরিচিত নাম', lt);
+}
+
+// ৩৮–৪৭: সুতা ও তাঁত (vector illustration)
+function sceneKhadi(lt) {
+  bg(vgrad('#f7f0e3', '#efe3cf'));
+  // সুতার রিল
+  const ang = lt * 2.2;
+  circ(300, 470, 62, '#e6d2ad'); circ(300, 470, 20, '#c9a36a');
+  ctx.strokeStyle = '#b58f57'; ctx.lineWidth = 5;
+  for (let i = 0; i < 4; i++) {
+    const a = ang + i * Math.PI / 2;
+    ctx.beginPath();
+    ctx.moveTo(300 + Math.cos(a) * 22, 470 + Math.sin(a) * 22);
+    ctx.lineTo(300 + Math.cos(a) * 54, 470 + Math.sin(a) * 54);
+    ctx.stroke();
+  }
+  // তাঁতের কাঠামো
+  fillR(420, 190, 22, 470, '#7a5230'); fillR(1158, 190, 22, 470, '#7a5230');
+  fillR(420, 190, 760, 26, '#8c6238'); fillR(420, 614, 760, 26, '#8c6238');
+  ctx.strokeStyle = '#cbb896'; ctx.lineWidth = 2;
+  for (let x = 460; x <= 1140; x += 20) { ctx.beginPath(); ctx.moveTo(x, 216); ctx.lineTo(x, 614); ctx.stroke(); }
+  // বোনা কাপড়ের সারি (প্রতি tick-এ একটি)
+  const passed = lt < 0.4 ? 0 : Math.min(18, Math.floor((lt - 0.4) / 0.5) + 1);
+  for (let j = 0; j < passed; j++) {
+    const y = 598 - j * 12;
+    fillR(460, y - 9, 680, 9, j % 3 === 0 ? '#d9a441' : (j % 3 === 1 ? '#b5562b' : '#c96f3f'));
+  }
+  // মাকু (shuttle) — tick-এর সঙ্গে দিক বদলায়
+  let sx = 460, sy = 590;
+  if (lt >= 0.4) {
+    const i = Math.floor((lt - 0.4) / 0.5);
+    const k2 = ease(((lt - 0.4) % 0.5) / 0.5);
+    sx = i % 2 === 0 ? lerp(460, 1140, k2) : lerp(1140, 460, k2);
+    sy = 598 - Math.min(i + 1, 18) * 12 - 4;
+  }
+  ctx.save(); ctx.fillStyle = '#6b4a2f'; rr(sx - 36, sy - 8, 72, 16, 8); ctx.fill(); ctx.restore();
+  tag('ভেক্টর চিত্রণ');
+  caption('খাদি কাপড়', 'হাতের বুননে ঐতিহ্যের ছোঁয়া', lt);
+}
+
+// ৪৭–৫১: ধর্মসাগর (vector illustration)
+function sceneDharma(lt) {
+  bg(vgrad('#dcecf5', '#f3efe2', 0, 480));
+  for (let i = 0; i < 10; i++) circ(60 + i * 170, 470, 70 + (i % 3) * 14, '#8fbb97');
+  fillR(0, 466, W, H - 466, vgrad('#8cc3d6', '#4f93b3', 466, H));
+  fillR(0, 458, W, 10, '#6e9c6e');
+  for (let i = 0; i < 24; i++) {
+    const x = (i * 131 + lt * 26) % 1600, y = 520 + (i * 71) % 260;
+    const a = 0.3 + 0.3 * Math.sin(lt * 2 + i);
+    ctx.strokeStyle = `rgba(255,255,255,${a.toFixed(2)})`; ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.moveTo(x - 14, y); ctx.lineTo(x + 14, y); ctx.stroke();
+  }
+  const rip = [[560, 600], [1060, 650], [800, 560], [1260, 560]];
+  rip.forEach(([x, y], i) => {
+    const age = lt - 0.2 - i * 1.05;
+    if (age <= 0 || age > 3) return;
+    const f = age / 3, rx = 30 + f * 420;
+    ctx.strokeStyle = `rgba(255,255,255,${((1 - f) * 0.8).toFixed(3)})`;
+    ctx.lineWidth = 3;
+    ctx.beginPath(); ctx.ellipse(x, y, rx, rx * 0.22, 0, 0, TAU); ctx.stroke();
+  });
+  tag('ভেক্টর চিত্রণ');
+  caption('ধর্মসাগর', '', lt);
+}
+
+// ৫১–৫৫: কুমিল্লা ওয়ার সেমেট্রি (vector illustration, শান্ত ও সংযত)
+function sceneCemetery(lt) {
+  bg(vgrad('#ece6dc', '#cdd9cc'));
+  glow(1300, 260, 300, 'rgba(255,240,200,0.45)');
+  fillR(0, 430, W, H - 430, '#a6c295');
+  const rows = [[7, 120, 430], [9, 150, 510], [9, 170, 590]];
+  rows.forEach(([n, sp, base], r) => {
+    const s = 0.9 + r * 0.12;
+    for (let i = 0; i < n; i++) {
+      const x = 800 + (i - (n - 1) / 2) * sp;
+      const w = 40 * s, h = 64 * s;
+      ctx.fillStyle = 'rgba(0,0,0,0.12)';
+      ctx.beginPath(); ctx.ellipse(x + 6, base + 4, w * 0.7, 5, 0, 0, TAU); ctx.fill();
+      ctx.fillStyle = '#f3f2ec'; ctx.strokeStyle = '#a8a79c'; ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.moveTo(x - w / 2, base); ctx.lineTo(x - w / 2, base - h + w / 2);
+      ctx.arc(x, base - h + w / 2, w / 2, Math.PI, 0);
+      ctx.lineTo(x + w / 2, base); ctx.closePath();
+      ctx.fill(); ctx.stroke();
+    }
+  });
+  tag('ভেক্টর চিত্রণ');
+  caption('কুমিল্লা ওয়ার সেমেট্রি', '', lt);
+}
+
+// ৫৫–৬০: পিনে ফেরা
+function sceneReturn(lt) {
+  bg('#e6f0f3');
+  const e = ease(clamp(lt / 4));
+  const z = lerp(4.6, 2.1, e);
+  drawWorldMap(PIN, z);
+  drawPin(800, 360, 1, 1, lt);
+  tag('স্কিম্যাটিক মানচিত্র');
+  caption('কুমিল্লা—অতীতের ছোঁয়া, আজকের প্রাণ', '', lt);
+}
+
+/* ---------- দৃশ্য-তালিকা ---------- */
+const SCENES = [
+  { s: 0,  e: 5,  draw: sceneMap },
+  { s: 5,  e: 11, draw: sceneIntro },
+  { s: 11, e: 21, draw: sceneVihara },
+  { s: 21, e: 29, draw: sceneMuseum },
+  { s: 29, e: 38, draw: sceneRasmalai },
+  { s: 38, e: 47, draw: sceneKhadi },
+  { s: 47, e: 51, draw: sceneDharma },
+  { s: 51, e: 55, draw: sceneCemetery },
+  { s: 55, e: 60, draw: sceneReturn },
+];
+
+function draw(t) {
+  ctx.globalAlpha = 1;
+  ctx.fillStyle = '#f6f1e6'; ctx.fillRect(0, 0, W, H);
+  for (const sc of SCENES) {
+    const fi = sc.s === 0 ? 1 : clamp((t - sc.s) / 0.6);
+    const fo = sc.e >= DUR ? 1 : clamp((sc.e - t) / 0.6);
+    const a = Math.min(fi, fo);
+    if (a <= 0.001) continue;
+    ctx.save();
+    ctx.globalAlpha = a;
+    sc.draw(t - sc.s);
+    ctx.restore();
+  }
+  if (t > 58) {
+    ctx.save();
+    ctx.globalAlpha = clamp((t - 58) / 2);
+    ctx.fillStyle = '#000'; ctx.fillRect(0, 0, W, H);
+    ctx.restore();
+  }
+  ctx.globalAlpha = 1;
+}
+
+/* ============================================================
+   Web Audio: সব সাউন্ড ইফেক্ট synthesized (কোনো বাইরের ফাইল নেই)
+   ============================================================ */
+let ac = null, master = null, dest = null, noiseBuf = null;
+let muted = false;
+let live = [];
+const EPS = 0.0001;
+
+function ensureAudio() {
+  if (ac) { if (ac.state === 'suspended') ac.resume().catch(() => {}); return true; }
+  const AC = window.AudioContext || window.webkitAudioContext;
+  if (!AC) return false;
+  ac = new AC();
+  master = ac.createGain();
+  master.gain.value = muted ? 0 : 0.7;
+  master.connect(ac.destination);
+  dest = ac.createMediaStreamDestination(); // রেকর্ডিংয়ের জন্য
+  master.connect(dest);
+  noiseBuf = ac.createBuffer(1, ac.sampleRate * 2, ac.sampleRate);
+  const d = noiseBuf.getChannelData(0);
+  for (let i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1;
+  return true;
+}
+function keep(n) { live.push(n); return n; }
+function stopAll() {
+  for (const n of live) { try { n.stop(); } catch (e) {} }
+  live = [];
+}
+
+function tone(type, f, s, dur, peak, { attack = 0.01, glide = null, detune = 0 } = {}) {
+  const o = ac.createOscillator(), g = ac.createGain();
+  o.type = type;
+  o.frequency.setValueAtTime(f, s);
+  if (glide) o.frequency.exponentialRampToValueAtTime(glide, s + dur * 0.6);
+  o.detune.value = detune;
+  g.gain.setValueAtTime(EPS, s);
+  g.gain.exponentialRampToValueAtTime(peak, s + attack);
+  g.gain.exponentialRampToValueAtTime(EPS, s + dur);
+  o.connect(g); g.connect(master);
+  o.start(s); o.stop(s + dur + 0.05);
+  keep(o);
+}
+
+function noise(s, dur, peak, { type = 'bandpass', f0 = 800, f1 = null, q = 0.7, attack = 0.2 } = {}) {
+  const src = ac.createBufferSource();
+  src.buffer = noiseBuf; src.loop = true;
+  const fl = ac.createBiquadFilter();
+  fl.type = type; fl.Q.value = q;
+  fl.frequency.setValueAtTime(f0, s);
+  if (f1) fl.frequency.exponentialRampToValueAtTime(f1, s + dur);
+  const g = ac.createGain();
+  g.gain.setValueAtTime(EPS, s);
+  g.gain.exponentialRampToValueAtTime(peak, s + dur * attack);
+  g.gain.exponentialRampToValueAtTime(EPS, s + dur);
+  src.connect(fl); fl.connect(g); g.connect(master);
+  src.start(s); src.stop(s + dur + 0.05);
+  keep(src);
+}
+
+const SFX = {
+  // নরম whoosh (ফিল্টারড নয়েজ)
+  whoosh(s, dur, f0, f1, peak) {
+    noise(s, dur, peak, { type: 'bandpass', f0, f1, q: 1.2, attack: 0.4 });
+  },
+  // ছোট, নরম pop
+  pop(s, peak = 0.14) {
+    tone('sine', 420, s, 0.22, peak, { attack: 0.004, glide: 170 });
+  },
+  // মৃদু chime
+  chime(s, notes, gap = 0.16, len = 1.8, peak = 0.06) {
+    notes.forEach((f, i) => {
+      const t0 = s + i * gap;
+      tone('sine', f, t0, len, peak, { attack: 0.02 });
+      tone('sine', f * 2, t0, len * 0.45, peak * 0.2, { attack: 0.01 });
+    });
+  },
+  // airy shimmer
+  shimmer(s, dur) {
+    [1046.5, 1318.5, 1568, 2093].forEach((f, i) => {
+      tone('sine', f, s + i * 0.25, dur - i * 0.25, 0.011, { attack: 1.6, detune: i % 2 ? 6 : -6 });
+    });
+    noise(s, dur, 0.008, { type: 'highpass', f0: 5000, f1: 7000, q: 0.5, attack: 0.5 });
+  },
+  // তাঁতের tick
+  tick(s, high) {
+    tone('triangle', high ? 1900 : 1500, s, 0.05, 0.035, { attack: 0.002 });
+  },
+  // water ripple
+  ripple(s, dur) {
+    noise(s, dur, 0.03, { type: 'lowpass', f0: 900, f1: 420, q: 0.5, attack: 0.35 });
+    for (let i = 0; i < 5; i++) {
+      const t0 = s + 0.5 + i * 0.7 + Math.random() * 0.15;
+      tone('sine', 1100, t0, 0.28, 0.025, { attack: 0.005, glide: 560 });
+    }
+  },
+  // সম্মানজনক, খুব নরম chime
+  cemetery(s) {
+    tone('sine', 523.25, s, 3.2, 0.04, { attack: 0.6 });
+    tone('sine', 783.99, s + 0.4, 3.0, 0.02, { attack: 0.6 });
+  },
+};
+
+// টাইমলাইন অনুযায়ী সাউন্ড ইভেন্ট
+const EVENTS = [
+  { t: 0.05,  fn: s => SFX.whoosh(s, 3.6, 260, 1100, 0.09) },                  // ম্যাপ জুম
+  { t: 4.05,  fn: s => { SFX.pop(s, 0.14); SFX.chime(s + 0.1, [784, 988], 0.18, 1.6, 0.05); } }, // pin
+  { t: 5.0,   fn: s => SFX.whoosh(s, 1.2, 1200, 380, 0.08) },                 // transition
+  { t: 11.0,  fn: s => SFX.shimmer(s, 8.5) },                                 // বিহার
+  { t: 21.2,  fn: s => SFX.chime(s, [1046.5], 0.1, 1.3, 0.04) },              // প্রত্নবস্তু
+  { t: 29.2,  fn: s => SFX.pop(s, 0.08) },                                    // রসমালাই পৌঁছায়
+  { t: 29.8,  fn: s => SFX.chime(s, [1318.5, 1760], 0.2, 1.5, 0.04) },        // মিষ্টি chime
+  { t: 47.1,  fn: s => SFX.ripple(s, 3.6) },                                  // ধর্মসাগর
+  { t: 51.2,  fn: s => SFX.cemetery(s) },                                     // ওয়ার সেমেট্রি
+  { t: 55.0,  fn: s => SFX.whoosh(s, 1.6, 1100, 240, 0.08) },                 // closing whoosh
+  { t: 58.3,  fn: s => SFX.chime(s, [659.25, 523.25], 0.3, 2.2, 0.045) },     // শেষের chime
+];
+for (let i = 0; i < 18; i++) {
+  EVENTS.push({ t: 38.4 + i * 0.5, fn: s => SFX.tick(s, i % 2 === 1) });       // তাঁতের tick-tick
+}
+
+function resetEvents() { EVENTS.forEach(e => e.done = false); }
+function fireEvents(t) {
+  if (!ac) return;
+  const s = ac.currentTime + 0.02;
+  for (const e of EVENTS) {
+    if (!e.done && t >= e.t) {
+      e.done = true;
+      try { e.fn(s); } catch (err) { console.warn(err); }
+    }
+  }
+}
+
+/* ============================================================
+   প্লেব্যাক স্টেট ও নিয়ন্ত্রণ
+   ============================================================ */
+let state = 'idle';            // idle | playing | paused | ended
+let baseT = 0, wallStart = 0;
+let recorder = null, chunks = [], recording = false;
+
+const now = () => performance.now() / 1000;
+function getT() {
+  if (state === 'playing') return Math.min(DUR, baseT + (now() - wallStart));
+  return baseT;
+}
+function mmss(t) {
+  const s = Math.floor(t);
+  return String(Math.floor(s / 60)).padStart(2, '0') + ':' + String(s % 60).padStart(2, '0');
+}
+
+function startPlayback() {
+  stopAll(); resetEvents();
+  baseT = 0; wallStart = now(); state = 'playing';
+}
+
+function updateButtons() {
+  playBtn.disabled = recording;
+  replayBtn.disabled = recording;
+  dlBtn.disabled = recording;
+  playBtn.textContent = state === 'playing' ? '❚❚ থামান' : state === 'paused' ? '▶ চালিয়ে যান' : '▶ শুরু করুন';
+  dlBtn.textContent = recording ? '● রেকর্ড হচ্ছে…' : '⬇ WebM ডাউনলোড';
+  muteBtn.textContent = muted ? '🔈 সাউন্ড চালু' : '🔇 মিউট';
+}
+
+playBtn.addEventListener('click', () => {
+  ensureAudio();
+  if (state === 'playing') {
+    baseT = getT(); state = 'paused';
+    if (ac) ac.suspend().catch(() => {});
+  } else if (state === 'paused') {
+    state = 'playing'; wallStart = now();
+    if (ac) ac.resume().catch(() => {});
+  } else {
+    startPlayback();
+  }
+  updateButtons();
+});
+
+replayBtn.addEventListener('click', () => {
+  ensureAudio();
+  startPlayback();
+  updateButtons();
+});
+
+muteBtn.addEventListener('click', () => {
+  muted = !muted;
+  if (master && ac) master.gain.setTargetAtTime(muted ? 0 : 0.7, ac.currentTime, 0.03);
+  updateButtons();
+});
+
+/* ---------- WebM রেকর্ডিং (canvas + audio stream) ---------- */
+dlBtn.addEventListener('click', () => {
+  if (!window.MediaRecorder || !cv.captureStream) {
+    alert('এই ব্রাউজারে WebM রেকর্ডিং সমর্থিত নয়। Chrome বা Edge ব্যবহার করুন।');
+    return;
+  }
+  ensureAudio();
+  startPlayback();
+  const tracks = [...cv.captureStream(30).getVideoTracks()];
+  if (dest) tracks.push(...dest.stream.getAudioTracks());
+  const stream = new MediaStream(tracks);
+  const mime = ['video/webm;codecs=vp9,opus', 'video/webm;codecs=vp8,opus', 'video/webm']
+    .find(m => MediaRecorder.isTypeSupported(m));
+  try {
+    recorder = new MediaRecorder(stream, mime
+      ? { mimeType: mime, videoBitsPerSecond: 4000000 }
+      : { videoBitsPerSecond: 4000000 });
+  } catch (err) {
+    alert('রেকর্ডিং শুরু করা যায়নি: ' + err.message);
+    state = 'idle';
+    updateButtons();
+    return;
+  }
+  chunks = [];
+  recorder.ondataavailable = e => { if (e.data && e.data.size) chunks.push(e.data); };
+  recorder.onstop = () => {
+    const type = recorder.mimeType || 'video/webm';
+    const ext = type.includes('mp4') ? 'mp4' : 'webm';
+    const blob = new Blob(chunks, { type });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = `kumilla-60s-documentary.${ext}`;
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 15000);
+    recording = false;
+    updateButtons();
+  };
+  recorder.start(1000);
+  recording = true;
+  updateButtons();
+});
+
+/* ============================================================
+   মূল লুপ
+   ============================================================ */
+function frame() {
+  let t = getT();
+  if (state === 'playing') {
+    fireEvents(t);
+    if (t >= DUR) {
+      t = DUR; baseT = DUR; state = 'ended';
+      if (recorder && recorder.state === 'recording') recorder.stop();
+      updateButtons();
+    }
+  }
+  draw(t);
+  timeEl.textContent = `${mmss(t)} / 01:00`;
+  fillEl.style.width = (t / DUR * 100).toFixed(2) + '%';
+  requestAnimationFrame(frame);
+}
+
+updateButtons();
+draw(0);
+requestAnimationFrame(frame);
+</script>
+</body>
+</html>
